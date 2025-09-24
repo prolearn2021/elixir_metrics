@@ -15,66 +15,53 @@ defmodule ElixirMetrics.Application do
     ]
 
     opts = [strategy: :one_for_one, name: ElixirMetrics.Supervisor]
-    {:ok, sup} = Supervisor.start_link(children, opts)
+    {:ok, sup_pid} = Supervisor.start_link(children, opts)
 
-    # ---- DogStatsD (Statix) connect w/ retry & periodic re-connect ----
-    host_env = System.get_env("STATSD_HOST", "datadog")
+    # connect Statix (DogStatsD) after the tree is up
+    connect_dogstatsd()
+
+    {:ok, sup_pid}
+  end
+
+  defp connect_dogstatsd do
+    host = System.get_env("STATSD_HOST", "datadog")
+
     port =
       case System.get_env("STATSD_PORT", "8125") do
         p when is_integer(p) -> p
-        p when is_binary(p)  -> String.to_integer(p)
+        p when is_binary(p) -> String.to_integer(p)
       end
 
-    host_ip =
-      case :inet.getaddr(String.to_charlist(host_env), :inet) do
-        {:ok, ip} ->
-          ip
-        {:error, reason} ->
-          Logger.warning("Could not resolve #{host_env} (#{inspect(reason)}), using hostname")
-          host_env
-      end
+    max_attempts = 10
 
-    connect_ok? =
-      1..10
-      |> Enum.reduce_while(false, fn attempt, _acc ->
-        case ElixirMetrics.Metrics.connect(host: host_ip, port: port) do
+    result =
+      Enum.reduce_while(1..max_attempts, :error, fn attempt, _acc ->
+        case ElixirMetrics.Metrics.connect(host: host, port: port) do
           :ok ->
-            Logger.info("✅ Statix connected to #{inspect(host_ip)}:#{port} on attempt #{attempt}")
-            # one-time boot metric to verify DogStatsD intake
+            Logger.info("✅ Statix connected to #{host}:#{port} on attempt #{attempt}")
+            # optional boot ping to confirm path end-to-end
             ElixirMetrics.Metrics.incr("boot.ping", 1, ["env:dev", "service:elixir-metrics"])
-            {:halt, true}
+            {:halt, :ok}
 
           {:error, reason} ->
-            Logger.warning("⚠️  Statix connect failed (#{inspect(reason)}) to #{inspect(host_ip)}:#{port}, retrying...")
+            Logger.warning(
+              "⚠️  Statix connect failed (#{inspect(reason)}) to #{host}:#{port}, retrying..."
+            )
+
             Process.sleep(300)
-            {:cont, false}
+            {:cont, :error}
+
+          other ->
+            Logger.warning("⚠️  Statix connect unexpected reply: #{inspect(other)}")
+            Process.sleep(300)
+            {:cont, :error}
         end
       end)
 
-    unless connect_ok? do
-      Logger.error("❌ Statix could not connect to #{inspect(host_ip)}:#{port}. DogStatsD metrics may be dropped.")
-    end
-
-    # Periodic, idempotent reconnect (handles UDP socket closure)
-    _ = Task.Supervisor.start_child(Task.Supervisor, fn ->
-      :timer.sleep(2_000)
-      :ok = periodic_reconnect(host_ip, port)
-    end) rescue :ok
-    # -------------------------------------------------------------------
-
-    {:ok, sup}
-  end
-
-  defp periodic_reconnect(host_ip, port) do
-    case ElixirMetrics.Metrics.connect(host: host_ip, port: port) do
+    case result do
       :ok -> :ok
-      {:error, reason} ->
-        Logger.debug("Statix periodic reconnect failed: #{inspect(reason)}")
-        :ok
+      _ -> Logger.error("❌ Statix could not connect to #{host}:#{port}. DogStatsD metrics will be dropped.")
     end
-
-    :timer.sleep(5_000)
-    periodic_reconnect(host_ip, port)
   end
 
   @impl true
