@@ -11,14 +11,10 @@ defmodule ElixirMetricsWeb.MetricsController do
   """
   def test(conn, %{"type" => type}) do
     start_time = System.monotonic_time(:millisecond)
-
-    # Simulate some work
     :timer.sleep(Enum.random(10..100))
-
     duration = System.monotonic_time(:millisecond) - start_time
     status = 200
 
-    # Tags for DogStatsD
     tags = [
       "env:dev",
       "service:elixir-metrics",
@@ -51,12 +47,7 @@ defmodule ElixirMetricsWeb.MetricsController do
     Dog.incr("requests.total", 1, tags)
     Dog.timing_ms("request_latency_ms", duration, tags)
 
-    json(conn, %{
-      status: "ok",
-      type: type,
-      duration_ms: duration,
-      timestamp: DateTime.utc_now()
-    })
+    json(conn, %{status: "ok", type: type, duration_ms: duration, timestamp: DateTime.utc_now()})
   end
 
   @doc """
@@ -113,6 +104,7 @@ defmodule ElixirMetricsWeb.MetricsController do
       "success:#{success}",
       "type:#{type}"
     ])
+
     Dog.timing_ms("jobs.duration_ms", duration, [
       "env:dev",
       "service:elixir-metrics",
