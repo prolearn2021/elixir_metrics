@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: elixir_metrics
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  graphite:
+    image: graphiteapp/graphite-statsd:latest
+    ports:
+      - "80:80"           # Graphite web interface
+      - "8125:8125/udp"   # StatsD UDP port
+      - "8126:8126"       # StatsD management port
+      - "2003:2003"       # Carbon receiver - plaintext
+      - "2004:2004"       # Carbon receiver - pickle
+    volumes:
+      - graphite_data:/opt/graphite/storage
+    environment:
+      GRAPHITE_TIME_ZONE: UTC
+      # Enable debug logging for StatsD
+      STATSD_DEBUG: "true"
+      # Configure StatsD flush interval (default 10000ms)
+      STATSD_FLUSH_INTERVAL: "5000"
+      # Enable Graphite debug logging
+      GRAPHITE_DEBUG: "true"
+      # Configure log level
+      GRAPHITE_LOG_LEVEL: "DEBUG"
+
+#  app:
+#    build: .
+#    depends_on:
+#      postgres:
+#        condition: service_healthy
+#      graphite:
+#        condition: service_started
+#    ports:
+#      - "4000:4000"
+#    environment:
+#      DB_USER: postgres
+#      DB_PASSWORD: postgres
+#      DB_HOST: postgres
+#      DB_NAME: elixir_metrics
+#      GRAPHITE_HOST: graphite
+#      GRAPHITE_PORT: 8125
+#      PHX_HOST: localhost
+#    volumes:
+#      - .:/app
+#      - mix_deps:/app/deps
+#      - mix_build:/app/_build
+#    command: sh -c "mix ecto.create && mix ecto.migrate && mix phx.server"
+
+  # Optional: OpenTelemetry Collector for comparison
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics
+    depends_on:
+      - graphite
+
+volumes:
+  postgres_data:
+  graphite_data:
+  mix_deps:
+  mix_build:
