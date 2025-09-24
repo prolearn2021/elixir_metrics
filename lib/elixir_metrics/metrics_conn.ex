@@ -1,65 +1,65 @@
-defmodule ElixirMetrics.MetricsConn do
+defmodule ElixirMetrics.MetricsConnector do
   @moduledoc """
-  Long-lived process that owns the UDP socket used by Statix (DogStatsD).
+  Supervised, long-lived process that *owns* the DogStatsD UDP socket.
 
-  We connect in `init/1` and keep retrying until it succeeds so metrics
-  aren't dropped on boot if the Agent isn't ready yet.
+  We do the `ElixirMetrics.Metrics.connect/1` here so the port belongs to this
+  GenServer (which is kept alive by the supervision tree), preventing the
+  “lost value due to port closure” errors you were seeing.
   """
+
   use GenServer
   require Logger
 
-  @retry_initial_ms 300
-  @retry_max_ms 2_000
+  # -- Public API
 
-  # Public API ---------------------------------------------------------------
+  def start_link(opts) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
 
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-
-  # GenServer callbacks ------------------------------------------------------
+  # -- GenServer callbacks
 
   @impl true
   def init(opts) do
     host = Keyword.get(opts, :host, System.get_env("STATSD_HOST", "datadog"))
-    port = port_to_int(Keyword.get(opts, :port, System.get_env("STATSD_PORT", "8125")))
-    state = %{host: host, port: port, backoff: @retry_initial_ms}
+    port =
+      case Keyword.get(opts, :port, System.get_env("STATSD_PORT", "8125")) do
+        p when is_integer(p) -> p
+        p when is_binary(p)  -> String.to_integer(p)
+      end
 
-    case ElixirMetrics.Metrics.connect(host: host, port: port) do
-      :ok ->
-        Logger.info("✅ Statix connected to #{host}:#{port}")
-        # Optional boot ping so you can grep it from the Agent
-        ElixirMetrics.Metrics.incr("boot.ping", 1, ["env:dev", "service:elixir-metrics"])
-        {:ok, state}
+    # Try a few times at boot in case the Agent isn't ready yet.
+    connect_with_retry(host, port, attempts: 10, backoff_ms: 300)
 
-      {:error, reason} ->
-        Logger.warning("⚠️ Statix connect failed to #{host}:#{port} (#{inspect(reason)}), retrying...")
-        Process.send_after(self(), :retry_connect, state.backoff)
-        {:ok, state}
-    end
+    # Send a single boot ping so you can confirm delivery in the Agent.
+    ElixirMetrics.Metrics.incr("boot.ping", 1, ["env:dev", "service:elixir-metrics"])
+
+    {:ok, %{host: host, port: port}}
   end
 
-  @impl true
-  def handle_info(:retry_connect, %{host: host, port: port, backoff: backoff} = state) do
-    case ElixirMetrics.Metrics.connect(host: host, port: port) do
-      :ok ->
-        Logger.info("✅ Statix connected to #{host}:#{port} (after retry)")
-        ElixirMetrics.Metrics.incr("boot.ping", 1, ["env:dev", "service:elixir-metrics"])
-        {:noreply, %{state | backoff: @retry_initial_ms}}
+  # -- Helpers
 
-      {:error, reason} ->
-        next = min(backoff * 2, @retry_max_ms)
-        Logger.warning("⚠️ Statix retry failed (#{inspect(reason)}), next in #{next} ms")
-        Process.send_after(self(), :retry_connect, next)
-        {:noreply, %{state | backoff: next}}
-    end
-  end
+  defp connect_with_retry(host, port, attempts: attempts, backoff_ms: backoff) do
+    1..attempts
+    |> Enum.reduce_while(nil, fn attempt, _ ->
+      case ElixirMetrics.Metrics.connect(host: host, port: port) do
+        :ok ->
+          Logger.info("✅ Statix connected to #{host}:#{port} on attempt #{attempt}")
+          {:halt, :ok}
 
-  # Helpers -----------------------------------------------------------------
+        {:error, reason} ->
+          Logger.warning(
+            "⚠️  Statix connect failed (#{inspect(reason)}) to #{host}:#{port}, retrying..."
+          )
 
-  defp port_to_int(p) when is_integer(p), do: p
-  defp port_to_int(p) when is_binary(p) do
-    case Integer.parse(p) do
-      {i, ""} -> i
-      _ -> 8125
+          Process.sleep(backoff)
+          {:cont, nil}
+      end
+    end)
+    |> case do
+      :ok -> :ok
+      _ ->
+        Logger.error("❌ Statix could not connect to #{host}:#{port}. Metrics will be dropped.")
+        :ok
     end
   end
 end

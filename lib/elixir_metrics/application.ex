@@ -11,10 +11,10 @@ defmodule ElixirMetrics.Application do
       {Phoenix.PubSub, name: ElixirMetrics.PubSub},
       {Oban, Application.fetch_env!(:elixir_metrics, Oban)},
 
-      # 🔌 Long-lived DogStatsD connection owner (prevents UDP port closure)
-      {ElixirMetrics.MetricsConn, []},
+      # 👇 Own the DogStatsD socket in a supervised, long-lived process
+      {ElixirMetrics.MetricsConnector, []},
 
-      # Start to serve requests, typically the last entry
+      # Start the HTTP endpoint last
       ElixirMetricsWeb.Endpoint
     ]
 
