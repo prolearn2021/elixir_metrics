@@ -1,4 +1,12 @@
 defmodule ElixirMetrics.Metrics do
+  @moduledoc """
+  Thin Statix wrapper with a fixed prefix `custom`.
+
+  Use:
+    ElixirMetrics.Metrics.incr("requests.total", 1, ["env:dev"])
+    ElixirMetrics.Metrics.timing_ms("request_latency_ms", 42, ["env:dev"])
+  """
+
   # allow runtime host/port changes (so we can connect to the Agent at boot)
   use Statix, runtime_config: true, prefix: "custom"
 

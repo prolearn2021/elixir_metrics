@@ -1,4 +1,3 @@
-services:
   datadog:
     image: gcr.io/datadoghq/agent:7
     container_name: datadog
@@ -12,7 +11,9 @@ services:
       DD_APM_ENABLED: "true"
       DD_APM_NON_LOCAL_TRAFFIC: "true"
       DD_DOGSTATSD_NON_LOCAL_TRAFFIC: "true"
-      DD_DOGSTATSD_METRICS_STATS_ENABLE: "true"
+
+      # (NEW) Optional: add global tags so even untagged metrics carry env/service
+      DD_DOGSTATSD_TAGS: "env:dev,service:elixir-metrics"
 
       # 🔵 LOGS
       DD_LOGS_ENABLED: "true"
@@ -22,57 +23,3 @@ services:
       # (optional) accept OTLP directly
       DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT: "0.0.0.0:4317"
       DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT:  "0.0.0.0:4318"
-    ports:
-      - "8126:8126"        # APM
-      - "8125:8125/udp"    # DogStatsD
-      - "4317:4317"        # OTLP gRPC (optional)
-      - "4318:4318"        # OTLP HTTP (optional)
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /proc/:/host/proc/:ro
-      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
-
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: elixir_metrics
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  app:
-    build: .
-    command: mix phx.server
-    ports:
-      - "4000:4000"
-    environment:
-      MIX_ENV: dev
-      # DB
-      DB_HOST: postgres
-      DB_USERNAME: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: elixir_metrics_dev
-      # Send OTLP to Datadog Agent
-      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://datadog:4318
-      OTEL_TRACES_EXPORTER: otlp
-      OTEL_METRICS_EXPORTER: otlp
-      OTEL_LOGS_EXPORTER: otlp
-      # Send StatsD metrics to DogStatsD (Agent)
-      STATSD_HOST: datadog
-      STATSD_PORT: 8125
-    depends_on:
-      - postgres
-      - datadog
-
-volumes:
-  postgres_data:
