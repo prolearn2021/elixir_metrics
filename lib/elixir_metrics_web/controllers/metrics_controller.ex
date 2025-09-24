@@ -10,6 +10,9 @@ defmodule ElixirMetricsWeb.MetricsController do
   and always sends DogStatsD counters/timings.
   """
   def test(conn, %{"type" => type}) do
+    # Ensure this **request process** has a DogStatsD socket
+    Dog.ensure_connected()
+
     start_time = System.monotonic_time(:millisecond)
     :timer.sleep(Enum.random(10..100))
     duration = System.monotonic_time(:millisecond) - start_time
@@ -43,17 +46,23 @@ defmodule ElixirMetricsWeb.MetricsController do
         :ok
     end
 
-    # Always send DogStatsD too (prefix "custom." via Statix)
     Dog.incr("requests.total", 1, tags)
     Dog.timing_ms("request_latency_ms", duration, tags)
 
-    json(conn, %{status: "ok", type: type, duration_ms: duration, timestamp: DateTime.utc_now()})
+    json(conn, %{
+      status: "ok",
+      type: type,
+      duration_ms: duration,
+      timestamp: DateTime.utc_now()
+    })
   end
 
   @doc """
   Simulate DB operation with metrics
   """
   def database(conn, %{"type" => type}) do
+    Dog.ensure_connected()
+
     start_time = System.monotonic_time(:millisecond)
     :timer.sleep(Enum.random(20..200))
     duration = System.monotonic_time(:millisecond) - start_time
@@ -82,6 +91,8 @@ defmodule ElixirMetricsWeb.MetricsController do
   Simulate background job with metrics
   """
   def job(conn, %{"type" => type}) do
+    Dog.ensure_connected()
+
     start_time = System.monotonic_time(:millisecond)
     :timer.sleep(Enum.random(50..500))
     duration = System.monotonic_time(:millisecond) - start_time
